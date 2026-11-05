@@ -15,8 +15,8 @@ chrono = { version = "0.4.45", default-features = false, features = ["clock", "s
 clap = { version = "4.6.7", features = ["derive", "env"] }
 flate2 = "1.1.10"
 futures-util = "0.3.34"
-rust-afariano-ci = { version = "0.6.0", path = "../ci" }
-rust-afariano-proto = { version = "0.6.0", path = "../proto" }
+rust-afariano-ci = { version = "0.7.0", path = "../ci" }
+rust-afariano-proto = { version = "0.7.0", path = "../proto" }
 pulldown-cmark = "0.13.6"
 rand = "0.10.3"
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls"] }

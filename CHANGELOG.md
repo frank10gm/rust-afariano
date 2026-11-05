@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.7.0] - 2026-11-05
 
 ### Added
 
@@ -13,7 +13,8 @@ All notable changes to this project are documented here. The format follows
   and the branch chip appears only when the ref is not the default branch. Per
   repository, in *Settings → General* (*Show variables in the pipeline list*, API
   `list_shows_variables`), off by default: everyone who can read the repository sees
-  the values.
+  the values. Contributed by Alessandro Marra
+  ([#1](https://github.com/frank10gm/rust-afariano/pull/1)).
 - A *Secret* box on each row of *Other variables* in *Run pipeline*, and
   `"secret": true` on a variable of `POST …/pipelines`. A secret value (a single line
   of 8 characters or more) shows as `••••••` in the list, is not in the page at all,
@@ -251,6 +252,10 @@ First public release.
   clones of a 216 MB repository at once.
 - Container image, `docker-compose.yml`, and prebuilt runner binaries.
 
+[0.7.0]: https://github.com/frank10gm/rust-afariano/releases/tag/v0.7.0
+[0.6.2]: https://github.com/frank10gm/rust-afariano/releases/tag/v0.6.2
+[0.6.1]: https://github.com/frank10gm/rust-afariano/releases/tag/v0.6.1
+[0.6.0]: https://github.com/frank10gm/rust-afariano/releases/tag/v0.6.0
 [0.5.1]: https://github.com/frank10gm/rust-afariano/releases/tag/v0.5.1
 [0.5.0]: https://github.com/frank10gm/rust-afariano/releases/tag/v0.5.0
 [0.4.1]: https://github.com/frank10gm/rust-afariano/releases/tag/v0.4.1

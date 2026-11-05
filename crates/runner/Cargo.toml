@@ -8,7 +8,7 @@ repository.workspace = true
 [dependencies]
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
-rust-afariano-proto = { version = "0.6.0", path = "../proto" }
+rust-afariano-proto = { version = "0.7.0", path = "../proto" }
 libc = "0.2.191"
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls-no-provider"] }
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
