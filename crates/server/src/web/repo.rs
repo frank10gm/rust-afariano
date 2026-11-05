@@ -93,7 +93,11 @@ pub async fn home(State(state): State<Shared>, CurrentUser(user): CurrentUser) -
         .iter()
         .filter_map(|p| {
             let path = paths.get(&p.repo_id)?;
-            Some(PipelineRow::new(p, path, p.created_by.and_then(|id| names.get(&id)).map(String::as_str)))
+            let repo = repos.iter().find(|r| r.id == p.repo_id)?;
+            Some(
+                PipelineRow::new(p, path, p.created_by.and_then(|id| names.get(&id)).map(String::as_str))
+                    .for_repo(repo),
+            )
         })
         .collect();
     super::attach_stages(&state, &mut pipelines).await?;

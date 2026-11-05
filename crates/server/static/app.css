@@ -191,6 +191,10 @@ a.sha:hover { color: var(--link); }
 .xs { font-size: 12px; }
 .nowrap { white-space: nowrap; }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vars { display: flex; flex-wrap: wrap; gap: 4px 6px; font-family: var(--mono); font-size: 13px; }
+.var { display: inline-flex; align-items: center; gap: 2px; max-width: 100%; padding: 1px 8px; border-radius: 6px; background: var(--bg-hover); color: var(--text-2); }
+.var b { font-weight: 600; color: var(--text); }
+.var .vv { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 28ch; }
 .meta-line { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; color: var(--text-2); font-size: 13px; }
 .meta-line > span { display: inline-flex; align-items: center; gap: 5px; min-width: 0; overflow-wrap: anywhere; }
 .meta-line svg.i { width: 14px; height: 14px; color: var(--text-3); }
@@ -280,6 +284,8 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--o
 .check { display: flex; align-items: flex-start; gap: 8px; font-size: 14px; }
 .check input { margin-top: 3px; accent-color: var(--olive); }
 .check .hint { display: block; }
+.var-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; align-items: center; }
+.var-row .check.inline { margin: 0; white-space: nowrap; }
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
 .input-group { display: flex; }
 .input-group input { border-radius: var(--radius) 0 0 var(--radius); font-family: var(--mono); font-size: 12.5px; }

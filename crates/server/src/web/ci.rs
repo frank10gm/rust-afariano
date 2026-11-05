@@ -67,7 +67,9 @@ pub async fn pipelines(
     let mut rows: Vec<PipelineRow> = list
         .iter()
         .take(PER_PAGE as usize)
-        .map(|p| PipelineRow::new(p, &rp, p.created_by.and_then(|id| names.get(&id)).map(String::as_str)))
+        .map(|p| {
+            PipelineRow::new(p, &rp, p.created_by.and_then(|id| names.get(&id)).map(String::as_str)).for_repo(&repo)
+        })
         .collect();
     super::attach_stages(&state, &mut rows).await?;
     let refresh = rows.iter().any(PipelineRow::active);
@@ -199,7 +201,7 @@ async fn new_pipeline_page(
     vars.retain(|v| !v.key.is_empty() || !v.value.is_empty());
     let free_rows = if form_vars.is_empty() { 3 } else { vars.len() + 1 };
     while vars.len() < free_rows {
-        vars.push(PipelineVar { key: String::new(), value: String::new() });
+        vars.push(PipelineVar { key: String::new(), value: String::new(), secret: None });
     }
     render(NewPipelinePage {
         user,
@@ -229,16 +231,24 @@ pub async fn run_pipeline(
     let mut vars_from = None;
     let mut keys = Vec::new();
     let mut values = Vec::new();
+    // Row numbers of the ticked "secret" boxes (an unticked box sends nothing).
+    let mut secrets = Vec::new();
     for (k, v) in form {
         match k.as_str() {
             "ref" => target = v,
             "vars_from" => vars_from = Some(v),
             "var_key" => keys.push(v),
             "var_value" => values.push(v),
+            "var_secret" => secrets.extend(v.parse::<usize>()),
             _ => {}
         }
     }
-    let vars: Vec<PipelineVar> = keys.into_iter().zip(values).map(|(key, value)| PipelineVar { key, value }).collect();
+    let vars: Vec<PipelineVar> = keys
+        .into_iter()
+        .zip(values)
+        .enumerate()
+        .map(|(i, (key, value))| PipelineVar { key, value, secret: Some(secrets.contains(&i)) })
+        .collect();
     if ref_input_name(&target).is_empty() {
         let msg = "Enter a branch or tag.".to_string();
         return new_pipeline_page(&state, user, &repo, role, target, msg, String::new(), vars).await;
@@ -641,10 +651,8 @@ mod tests {
         assert_eq!(strip_ansi("\x1b[32;1m$ echo\x1b[0m hi"), "$ echo hi");
     }
 
-    /// Readers see no Run pipeline button and no Settings tab; maintainers see both.
-    #[test]
-    fn pipelines_page_follows_role() {
-        let repo = Repo {
+    fn test_repo(list_shows_variables: bool) -> Repo {
+        Repo {
             id: 1,
             namespace: "acme".into(),
             name: "web".into(),
@@ -656,20 +664,70 @@ mod tests {
             pushed_at: None,
             mirror_url: None,
             prevent_outdated_deploys: true,
+            list_shows_variables,
+        }
+    }
+
+    fn pipelines_page(repo: &Repo, role: Role, pipelines: Vec<PipelineRow>) -> String {
+        PipelinesPage {
+            user: User { id: 2, email: "ana@example.com".into(), name: String::new(), is_admin: false },
+            nav: RepoNav::new(repo, role, "pipelines"),
+            pipelines,
+            show_repo: false,
+            prev_url: String::new(),
+            next_url: String::new(),
+            refresh: false,
+        }
+        .render()
+        .unwrap()
+    }
+
+    /// With the setting on, a row shows its run variables and the commit hash in place of
+    /// the commit title; a secret value is not in the page at all.
+    #[test]
+    fn pipeline_list_shows_variables() {
+        let pipeline = crate::models::Pipeline {
+            id: 1,
+            repo_id: 1,
+            iid: 7,
+            ref_name: "main".into(),
+            ref_is_tag: false,
+            sha: "0123abcd4567ef890123abcd4567ef890123abcd".into(),
+            before_sha: String::new(),
+            source: "web".into(),
+            status: "success".into(),
+            variables: sqlx::types::Json(vec![
+                PipelineVar { key: "TARGET_ENV".into(), value: "staging".into(), secret: Some(false) },
+                PipelineVar { key: "DEPLOY_TOKEN".into(), value: "s3cr3t-value".into(), secret: Some(true) },
+            ]),
+            stages: Vec::new(),
+            yaml_vars: sqlx::types::Json(Vec::new()),
+            error: None,
+            commit_title: "Fix the login form".into(),
+            created_by: None,
+            created_at: chrono::Utc::now(),
+            started_at: None,
+            finished_at: None,
         };
-        let page = |role| {
-            PipelinesPage {
-                user: User { id: 2, email: "ana@example.com".into(), name: String::new(), is_admin: false },
-                nav: RepoNav::new(&repo, role, "pipelines"),
-                pipelines: Vec::new(),
-                show_repo: false,
-                prev_url: String::new(),
-                next_url: String::new(),
-                refresh: false,
-            }
-            .render()
-            .unwrap()
+        let html = |on| {
+            let repo = test_repo(on);
+            pipelines_page(&repo, Role::Read, vec![PipelineRow::new(&pipeline, "acme/web", None).for_repo(&repo)])
         };
+        let on = html(true);
+        assert!(on.contains("TARGET_ENV") && on.contains("staging"));
+        assert!(on.contains("DEPLOY_TOKEN") && !on.contains("s3cr3t-value"));
+        assert!(on.contains("0123abcd"), "the commit hash stays");
+        assert!(!on.contains("Fix the login form"));
+        let off = html(false);
+        assert!(off.contains("Fix the login form") && off.contains("0123abcd"));
+        assert!(!off.contains("staging") && !off.contains("s3cr3t-value"));
+    }
+
+    /// Readers see no Run pipeline button and no Settings tab; maintainers see both.
+    #[test]
+    fn pipelines_page_follows_role() {
+        let repo = test_repo(false);
+        let page = |role| pipelines_page(&repo, role, Vec::new());
         let read = page(Role::Read);
         assert!(read.contains(r#"href="https://github.com/frank10gm/rust-afariano""#), "sidebar links the repository");
         assert!(!read.contains("/acme/web/-/pipelines/new"));

@@ -8,11 +8,15 @@
       <td class="w-min"><a href="{{ p.url }}">{% call ui::badge(p.status, p.label()) %}{% endcall %}</a></td>
       <td>
         <div class="two-line">
+          {% if p.vars_mode %}
+          <span class="vars">{% for v in p.vars %}<span class="var"><b>{{ v.key }}</b>={% if v.hidden %}<span class="vv" title="Hidden value">••••••</span>{% else %}<span class="vv" title="{{ v.value }}">{{ v.value }}</span>{% endif %}</span>{% endfor %}</span>
+          {% else %}
           <a class="cell-title truncate" href="{{ p.url }}">{% if p.title.is_empty() %}Pipeline #{{ p.iid }}{% else %}{{ p.title }}{% endif %}</a>
+          {% endif %}
           <span class="meta-line">
             <a href="{{ p.url }}">#{{ p.iid }}</a>
             {% if show_repo %}<a href="/{{ p.repo_path }}">{{ p.repo_path }}</a>{% endif %}
-            <span class="pill">{% if p.ref_is_tag %}{% call ui::i("tag") %}{% endcall %}{% else %}{% call ui::i("branch") %}{% endcall %}{% endif %}{{ p.ref_name }}</span>
+            {% if p.show_ref %}<span class="pill">{% if p.ref_is_tag %}{% call ui::i("tag") %}{% endcall %}{% else %}{% call ui::i("branch") %}{% endcall %}{% endif %}{{ p.ref_name }}</span>{% endif %}
             <span class="sha">{{ p.sha_short }}</span>
             <span>{{ p.trigger() }}</span>
           </span>

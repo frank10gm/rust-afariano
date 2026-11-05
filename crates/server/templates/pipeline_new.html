@@ -34,11 +34,12 @@
   {% endfor %}
   <div class="field">
     <span>{% if form_vars.is_empty() %}Variables{% else %}Other variables{% endif %}</span>
-    <span class="hint">{% if form_vars.is_empty() %}They override project and YAML variables for this run only.{% else %}All of these override project and YAML variables for this run only. The ones above come from <code>.gitlab-ci.yml</code> (variables with a <code>description</code>).{% endif %}</span>
+    <span class="hint">{% if form_vars.is_empty() %}They override project and YAML variables for this run only.{% else %}All of these override project and YAML variables for this run only. The ones above come from <code>.gitlab-ci.yml</code> (variables with a <code>description</code>).{% endif %} Tick <b>Secret</b> on a value that must not show in the pipeline list; it is masked in job logs too (single line, 8 characters or more).</span>
     {% for v in vars %}
-    <div class="row2">
+    <div class="var-row">
       <input type="text" name="var_key" placeholder="Key" value="{{ v.key }}" autocomplete="off" aria-label="Variable key">
       <input type="text" name="var_value" placeholder="Value" value="{{ v.value }}" autocomplete="off" aria-label="Variable value">
+      <label class="check inline"><input type="checkbox" name="var_secret" value="{{ form_vars.len() + loop.index0 }}"{% if v.is_secret() %} checked{% endif %}><span>Secret</span></label>
     </div>
     {% endfor %}
   </div>

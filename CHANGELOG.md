@@ -4,6 +4,34 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- The pipeline list can show the variables each run was started with (`KEY=value`)
+  in place of the commit title, for pipelines that have any; the commit hash stays,
+  and the branch chip appears only when the ref is not the default branch. Per
+  repository, in *Settings → General* (*Show variables in the pipeline list*, API
+  `list_shows_variables`), off by default: everyone who can read the repository sees
+  the values.
+- A *Secret* box on each row of *Other variables* in *Run pipeline*, and
+  `"secret": true` on a variable of `POST …/pipelines`. A secret value (a single line
+  of 8 characters or more) shows as `••••••` in the list, is not in the page at all,
+  and is masked in job logs like a masked project variable. Values of pipelines
+  started before this release are hidden the same way, but not masked.
+
+### Changed
+
+- Repository JSON has `list_shows_variables`.
+
+### Upgrading
+
+Migration 5 adds `repos.list_shows_variables` (default false). Run variables are
+stored with a `secret` flag; older pipelines have none, and the list never shows
+their values. To roll back:
+`ALTER TABLE repos DROP COLUMN list_shows_variables;
+DELETE FROM _sqlx_migrations WHERE version = 5;`
+
 ## [0.6.2] - 2026-11-05
 
 ### Fixed

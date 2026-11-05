@@ -26,10 +26,10 @@ auth=(-H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json")
 |---|---|---|
 | `POST /repos` | admin | `{"namespace", "name", "description"?, "default_branch"?, "protected_branches"?: [..], "pipelines_on_push"?, "mirror"?}` → `201` repository; `mirror` as in `PUT …/mirror` below |
 | `GET /repos/{ns}/{name}` | read | repository |
-| `PATCH /repos/{ns}/{name}` | maintain | any of `description`, `default_branch`, `protected_branches` (list, replaces), `pipelines_on_push`, `prevent_outdated_deploys` → repository |
+| `PATCH /repos/{ns}/{name}` | maintain | any of `description`, `default_branch`, `protected_branches` (list, replaces), `pipelines_on_push`, `prevent_outdated_deploys`, `list_shows_variables` → repository |
 
 A repository is `{"path", "description", "default_branch", "protected_branches",
-"pipelines_on_push", "prevent_outdated_deploys", "mirror_url", "role", "web_url",
+"pipelines_on_push", "prevent_outdated_deploys", "list_shows_variables", "mirror_url", "role", "web_url",
 "http_url", "ssh_url"}`, where `role` is the caller's and `mirror_url` is `null`
 unless the repository is a pull mirror.
 
@@ -90,7 +90,7 @@ Values cannot be read back through the API; maintainers can see them in the web 
 
 | Call | Role | Body / answer |
 |---|---|---|
-| `POST /repos/{ns}/{name}/pipelines` | write | `{"ref", "variables"?: [{"key", "value"}]}` → `201 {"iid", "web_url"}` |
+| `POST /repos/{ns}/{name}/pipelines` | write | `{"ref", "variables"?: [{"key", "value", "secret"?}]}` → `201 {"iid", "web_url"}`; `"secret": true` (a single line of 8 characters or more) hides the value in the web pipeline list and masks it in job logs |
 | `GET /repos/{ns}/{name}/pipelines/{iid}` | read | pipeline |
 | `POST /repos/{ns}/{name}/pipelines/{iid}/retry` | write | retries failed and canceled jobs → pipeline |
 | `POST /repos/{ns}/{name}/pipelines/{iid}/cancel` | write | → pipeline |

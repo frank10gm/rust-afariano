@@ -204,6 +204,7 @@ pub struct RepoSettings {
     pub protected_branches: Vec<String>,
     pub pipelines_on_push: bool,
     pub prevent_outdated_deploys: bool,
+    pub list_shows_variables: bool,
 }
 
 impl RepoSettings {
@@ -214,6 +215,7 @@ impl RepoSettings {
             protected_branches: repo.protected_branches.split(',').map(|p| p.trim().to_string()).collect(),
             pipelines_on_push: repo.pipelines_on_push,
             prevent_outdated_deploys: repo.prevent_outdated_deploys,
+            list_shows_variables: repo.list_shows_variables,
         }
     }
 }
@@ -234,7 +236,7 @@ pub async fn update_repo(state: &AppState, repo: &Repo, s: RepoSettings) -> Chec
     }
     sqlx::query(
         "UPDATE repos SET description = $2, default_branch = $3, protected_branches = $4, pipelines_on_push = $5, \
-         prevent_outdated_deploys = $6 WHERE id = $1",
+         prevent_outdated_deploys = $6, list_shows_variables = $7 WHERE id = $1",
     )
     .bind(repo.id)
     .bind(s.description.trim())
@@ -242,6 +244,7 @@ pub async fn update_repo(state: &AppState, repo: &Repo, s: RepoSettings) -> Chec
     .bind(protected.join(", "))
     .bind(s.pipelines_on_push)
     .bind(s.prevent_outdated_deploys)
+    .bind(s.list_shows_variables)
     .execute(&state.db)
     .await?;
     Ok(Ok(()))

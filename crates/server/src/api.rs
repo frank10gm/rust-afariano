@@ -34,6 +34,7 @@ fn repo_json(state: &AppState, repo: &Repo, role: Role) -> Value {
         "protected_branches": repo.protected_branches.split(',').map(str::trim).filter(|p| !p.is_empty()).collect::<Vec<_>>(),
         "pipelines_on_push": repo.pipelines_on_push,
         "prevent_outdated_deploys": repo.prevent_outdated_deploys,
+        "list_shows_variables": repo.list_shows_variables,
         "mirror_url": repo.mirror_url,
         "role": role.as_str(),
         "web_url": format!("{}/{path}", cfg.public_url),
@@ -114,6 +115,7 @@ pub struct RepoPatch {
     protected_branches: Option<Vec<String>>,
     pipelines_on_push: Option<bool>,
     prevent_outdated_deploys: Option<bool>,
+    list_shows_variables: Option<bool>,
 }
 
 /// `PATCH /api/v1/repos/{ns}/{name}` — changes only the fields given (maintain).
@@ -139,6 +141,9 @@ pub async fn patch_repo(
     }
     if let Some(v) = b.prevent_outdated_deploys {
         s.prevent_outdated_deploys = v;
+    }
+    if let Some(v) = b.list_shows_variables {
+        s.list_shows_variables = v;
     }
     ops::update_repo(&state, &repo, s).await?.map_err(bad)?;
     tracing::info!(repo = %repo.path(), by = %user.email, "repository settings changed");

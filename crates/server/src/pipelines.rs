@@ -599,7 +599,11 @@ async fn job_spec(state: &AppState, job: &Job, runner: &Runner, token: &str) -> 
         );
     }
     for v in &pipeline.variables.0 {
-        put(&mut vars, &v.key, &v.value);
+        // A secret run variable is masked in the job log like a masked project variable.
+        vars.insert(
+            v.key.clone(),
+            proto::Variable { key: v.key.clone(), value: v.value.clone(), file: false, masked: v.is_secret() },
+        );
     }
 
     let get = |k: &str| vars.get(k).map(|v| v.value.clone());

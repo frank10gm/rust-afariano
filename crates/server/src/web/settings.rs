@@ -510,6 +510,7 @@ pub struct RepoForm {
     protected_branches: String,
     pipelines_on_push: Option<String>,
     prevent_outdated_deploys: Option<String>,
+    list_shows_variables: Option<String>,
 }
 
 pub async fn update_repo(
@@ -525,6 +526,7 @@ pub async fn update_repo(
         protected_branches: f.protected_branches.split(',').map(str::to_string).collect(),
         pipelines_on_push: checked(&f.pipelines_on_push),
         prevent_outdated_deploys: checked(&f.prevent_outdated_deploys),
+        list_shows_variables: checked(&f.list_shows_variables),
     };
     if let Err(e) = crate::ops::update_repo(&state, &repo, settings).await? {
         return settings_page(&state, user, repo, e.into(), String::new()).await;

@@ -40,6 +40,11 @@ Know these before you deploy:
   with user and key). Protected variables reach only pipelines on
   protected branches and tags. Masking hides exact values in job logs; it is not
   a guarantee (a job can always print a secret transformed).
+- **Run variables** (given when a pipeline is started, in *Run pipeline* or the
+  API) are stored in plain text with the pipeline. The pipeline page shows only
+  their keys. With *Show variables in the pipeline list* on, the list shows their
+  values to everyone who can read the repository, except values marked *secret*,
+  which are also masked in job logs. Pass credentials as CI/CD variables instead.
 - **Tokens** (personal access tokens, runner tokens, job tokens) are stored as
   SHA-256 hashes. Job tokens are valid only while their job runs and only for
   cloning their own repository.

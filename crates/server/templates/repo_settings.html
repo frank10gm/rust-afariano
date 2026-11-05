@@ -26,6 +26,8 @@
       <span>Create pipelines on push<span class="hint">{% if nav.is_mirror() %}For a mirror: when a sync brings new commits. {% endif %}The file's <code>workflow:rules</code> still decide whether one runs.</span></span></label>
     <label class="check"><input type="checkbox" name="prevent_outdated_deploys" value="1"{% if repo.prevent_outdated_deploys %} checked{% endif %}>
       <span>Prevent outdated deployment jobs<span class="hint">A job with an <code>environment</code> does not run when a newer pipeline already deployed there. Retrying an old deployment job still works, to roll back on purpose.</span></span></label>
+    <label class="check"><input type="checkbox" name="list_shows_variables" value="1"{% if repo.list_shows_variables %} checked{% endif %}>
+      <span>Show variables in the pipeline list<span class="hint">Each row shows the variables the run was started with in place of the commit title, to everyone who can read the repository. Values marked <b>Secret</b> show as ••••••, and so do all values of pipelines started before this option existed. Pipelines started without variables keep the commit title.</span></span></label>
     <div><button class="btn confirm" type="submit">Save changes</button></div>
   </form>
 </section>

@@ -290,6 +290,27 @@ pub struct PipelineRow {
     pub duration: String,
     pub by: String,
     pub stages: Vec<StageDot>,
+    /// Variables the run was started with, in the order given.
+    pub vars: Vec<RowVar>,
+    /// List mode "variables": they replace the title (see `for_repo`).
+    pub vars_mode: bool,
+    /// Show the ref chip; in variables mode only when it is not the default branch.
+    pub show_ref: bool,
+}
+
+/// One run variable as the list shows it. A hidden value (secret, or from a pipeline
+/// stored before the flag existed) is left out of the page entirely.
+pub struct RowVar {
+    pub key: String,
+    pub value: String,
+    pub hidden: bool,
+}
+
+impl RowVar {
+    fn new(v: &PipelineVar) -> Self {
+        let hidden = !v.value_listed();
+        Self { key: v.key.clone(), value: if hidden { String::new() } else { v.value.clone() }, hidden }
+    }
 }
 
 impl PipelineRow {
@@ -315,7 +336,20 @@ impl PipelineRow {
             duration,
             by: by.unwrap_or("").to_string(),
             stages: Vec::new(),
+            vars: p.variables.0.iter().map(RowVar::new).collect(),
+            vars_mode: false,
+            show_ref: true,
         }
+    }
+
+    /// Applies the repository's list setting: with variables to show, they replace the
+    /// commit title (the hash stays), and the ref is shown only when it is not the default branch.
+    pub fn for_repo(mut self, repo: &Repo) -> Self {
+        if repo.list_shows_variables && !self.vars.is_empty() {
+            self.vars_mode = true;
+            self.show_ref = self.ref_is_tag || self.ref_name != repo.default_branch;
+        }
+        self
     }
 
     pub fn active(&self) -> bool {
@@ -449,7 +483,12 @@ pub fn clean_vars(vars: Vec<PipelineVar>) -> AppResult<Vec<PipelineVar>> {
         if !valid_var_key(&key) {
             return Err(bad(format!("invalid variable name `{key}` (letters, digits, _)")));
         }
-        out.push(PipelineVar { key, value: v.value });
+        let secret = v.is_secret();
+        // As for masked project variables: a shorter value would not be masked in job logs.
+        if secret && (v.value.trim().len() < 8 || v.value.trim().contains('\n')) {
+            return Err(bad(format!("`{key}`: a secret value must be a single line of at least 8 characters")));
+        }
+        out.push(PipelineVar { key, value: v.value, secret: Some(secret) });
     }
     Ok(out)
 }
@@ -509,6 +548,33 @@ mod tests {
         assert!(html.contains("href=\"#\""));
         assert!(html.contains("src=\"/n/r/-/raw/main/img.png\""));
         assert!(html.contains("href=\"/n/r/-/blob/main/docs/x.md\""));
+    }
+
+    fn var(key: &str, value: &str, secret: Option<bool>) -> PipelineVar {
+        PipelineVar { key: key.into(), value: value.into(), secret }
+    }
+
+    #[test]
+    fn clean_vars_sets_the_secret_flag() {
+        let v = clean_vars(vec![var("A", "1", None), var("TOKEN", "s3cr3t-value", Some(true))]).unwrap();
+        assert_eq!(v[0].secret, Some(false), "API calls without the flag: not secret");
+        assert!(v[1].is_secret());
+        // Shorter or multi-line values could not be masked in job logs.
+        assert!(clean_vars(vec![var("TOKEN", "short", Some(true))]).is_err());
+        assert!(clean_vars(vec![var("TOKEN", "line one\nline two", Some(true))]).is_err());
+        let stored = serde_json::to_string(&v).unwrap();
+        assert!(stored.contains(r#""secret":false"#) && stored.contains(r#""secret":true"#));
+    }
+
+    #[test]
+    fn list_hides_secret_and_older_values() {
+        let old: Vec<PipelineVar> = serde_json::from_str(r#"[{"key":"A","value":"1"}]"#).unwrap();
+        assert_eq!(old[0].secret, None);
+        let given = [old[0].clone(), var("B", "2", Some(false)), var("C", "s3cr3t-value", Some(true))];
+        let rows: Vec<RowVar> = given.iter().map(RowVar::new).collect();
+        assert!(rows[0].hidden && rows[0].value.is_empty(), "stored before the flag existed");
+        assert!(!rows[1].hidden && rows[1].value == "2");
+        assert!(rows[2].hidden && rows[2].value.is_empty(), "a secret value is not in the page");
     }
 
     #[test]

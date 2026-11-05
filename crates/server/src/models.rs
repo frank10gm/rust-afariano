@@ -40,10 +40,12 @@ pub struct Repo {
     pub mirror_url: Option<String>,
     /// Jobs with an environment do not run when a newer pipeline already deployed there.
     pub prevent_outdated_deploys: bool,
+    /// The pipeline list shows each run's variables instead of the commit title.
+    pub list_shows_variables: bool,
 }
 
 pub const REPO_COLS: &str = "id, namespace, name, description, default_branch, protected_branches, pipelines_on_push, \
-     created_at, pushed_at, mirror_url, prevent_outdated_deploys";
+     created_at, pushed_at, mirror_url, prevent_outdated_deploys, list_shows_variables";
 
 impl Repo {
     pub fn is_mirror(&self) -> bool {
@@ -71,6 +73,23 @@ impl Repo {
 pub struct PipelineVar {
     pub key: String,
     pub value: String,
+    /// `Some(true)`: hidden in the pipeline list and masked in job logs. `None` in API
+    /// calls without it (`clean_vars` makes it `Some(false)`) and in pipelines stored before
+    /// the flag existed, whose values the list never shows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<bool>,
+}
+
+impl PipelineVar {
+    /// Marked secret: masked in job logs, hidden in the pipeline list.
+    pub fn is_secret(&self) -> bool {
+        self.secret == Some(true)
+    }
+
+    /// The pipeline list may show the value: only when the run said it is not secret.
+    pub fn value_listed(&self) -> bool {
+        self.secret == Some(false)
+    }
 }
 
 #[derive(Debug, Clone, FromRow)]
