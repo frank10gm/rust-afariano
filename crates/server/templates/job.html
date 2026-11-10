@@ -4,6 +4,8 @@
 {% block repo_nav %}{% include "repo_nav.html" %}{% endblock %}
 {% block crumbs %}{% include "repo_crumbs.html" %}<span class="sep">/</span><a href="/{{ nav.path }}/-/pipelines">Pipelines</a><span class="sep">/</span><a href="{{ pipeline.url }}">#{{ pipeline.iid }}</a><span class="sep">/</span><span class="here">{{ job.name }}</span>{% endblock %}
 {% block content %}
+{% call ui::live(live) %}{% endcall %}
+<div id="live-job-head" data-live-region>
 <div class="pipeline-head">
   <div style="min-width:0">
     <h1>{% call ui::badge(job.vis, job.label()) %}{% endcall %} {{ job.name }}</h1>
@@ -23,8 +25,10 @@
 </div>
 {% if cancel_requested %}<div class="alert info">{% call ui::icon("pending") %}{% endcall %}<div>Cancel requested. The runner stops the job at its next check-in.</div></div>{% endif %}
 {% if !retried_from.is_empty() %}<div class="alert info">{% call ui::icon("skipped") %}{% endcall %}<div>This job was retried. <a href="{{ retried_from }}">Open the newer run</a>.</div></div>{% endif %}
+</div>
 <div class="job-layout">
-  <div>
+  {#- The log streams on its own; when the job turns into another kind of page, it reloads. #}
+  <div id="live-job-main" data-live-key="{% if job.status == "manual" %}manual{% else if job.status == "skipped" %}skipped{% else %}log{% endif %}">
   {% if job.status == "manual" %}
     <div class="box"><div class="empty"><h2>Manual job</h2><p>It starts only when someone runs it.</p>{% if nav.can_write() && job.can_play %}<form method="post" action="{{ job.url }}/play"><button class="btn confirm" type="submit">{% call ui::i("play") %}{% endcall %}Run job</button></form>{% endif %}</div></div>
   {% else if job.status == "skipped" %}
@@ -40,10 +44,10 @@
     </div>
   {% endif %}
   </div>
-  <aside class="side-card">
+  <aside class="side-card" id="live-job-side" data-live-region>
     <h2>Details</h2>
     <dl class="kv">
-      {% if !job.duration.is_empty() %}<dt>Duration</dt><dd>{{ job.duration }}</dd>{% endif %}
+      {% if !job.duration.is_empty() %}<dt>Duration</dt><dd{% if let Some(s) = job.elapsed %} data-elapsed="{{ s }}"{% endif %}>{{ job.duration }}</dd>{% endif %}
       {% if !queued_for.is_empty() %}<dt>Queued</dt><dd>{{ queued_for }}</dd>{% endif %}
       <dt>Created</dt><dd>{{ created }}</dd>
       {% if !started.is_empty() %}<dt>Started</dt><dd>{{ started }}</dd>{% endif %}

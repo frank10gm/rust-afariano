@@ -4,6 +4,8 @@
 {% block on_repos %}on{% endblock %}
 {% block crumbs %}<span class="here">Repositories</span>{% endblock %}
 {% block content %}
+{% call ui::live(live) %}{% endcall %}
+<div id="live-home" data-live-region>
 <div class="page-head">
   <h1>Repositories</h1>
   {% if user.is_admin %}<div class="actions"><a class="btn confirm" href="/-/new">{% call ui::i("plus") %}{% endcall %}New repository</a></div>{% endif %}
@@ -44,4 +46,5 @@
 <div class="section-title"><h2>Recent pipelines</h2></div>
 {% include "pipeline_rows.html" %}
 {% endif %}
+</div>
 {% endblock %}

@@ -112,10 +112,12 @@ pub struct Pipeline {
     pub created_at: DateTime<Utc>,
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
+    /// The job that started this pipeline with its `CI_JOB_TOKEN`.
+    pub parent_job_id: Option<i64>,
 }
 
 pub const PIPELINE_COLS: &str = "id, repo_id, iid, ref_name, ref_is_tag, sha, before_sha, source, status, variables, stages, \
-     yaml_vars, error, commit_title, created_by, created_at, started_at, finished_at";
+     yaml_vars, error, commit_title, created_by, created_at, started_at, finished_at, parent_job_id";
 
 #[allow(dead_code)] // mirrors the table row
 #[derive(Debug, Clone, FromRow)]

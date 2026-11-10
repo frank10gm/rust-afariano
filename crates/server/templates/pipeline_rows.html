@@ -18,12 +18,12 @@
             {% if show_repo %}<a href="/{{ p.repo_path }}">{{ p.repo_path }}</a>{% endif %}
             {% if p.show_ref %}<span class="pill">{% if p.ref_is_tag %}{% call ui::i("tag") %}{% endcall %}{% else %}{% call ui::i("branch") %}{% endcall %}{% endif %}{{ p.ref_name }}</span>{% endif %}
             <span class="sha">{{ p.sha_short }}</span>
-            <span>{{ p.trigger() }}</span>
+            <span>{% call ui::trigger(p) %}{% endcall %}</span>
           </span>
         </div>
       </td>
       <td class="w-min hide-sm"><span class="mini">{% for s in p.stages %}<span title="{{ s.name }}: {{ s.label() }}">{% call ui::icon(s.status) %}{% endcall %}</span>{% endfor %}</span></td>
-      <td class="r w-min hide-sm"><div class="when"><span>{% call ui::i("calendar") %}{% endcall %}{{ p.created_ago }}</span>{% if !p.duration.is_empty() %}<span>{% call ui::i("clock") %}{% endcall %}{{ p.duration }}</span>{% endif %}</div></td>
+      <td class="r w-min hide-sm"><div class="when"><span>{% call ui::i("calendar") %}{% endcall %}{{ p.created_ago }}</span>{% if !p.duration.is_empty() %}<span>{% call ui::i("clock") %}{% endcall %}<span{% if let Some(s) = p.elapsed %} data-elapsed="{{ s }}"{% endif %}>{{ p.duration }}</span></span>{% endif %}</div></td>
     </tr>
   {% endfor %}
   </tbody>

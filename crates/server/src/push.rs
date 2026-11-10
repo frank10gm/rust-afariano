@@ -78,6 +78,7 @@ pub async fn after_ref_update(
                 source: "push",
                 user: by,
                 variables: Vec::new(),
+                parent_job_id: None,
             };
             match pipelines::create(state, np).await {
                 Ok(Created::Pipeline(iid)) => tracing::debug!(iid, "push pipeline"),

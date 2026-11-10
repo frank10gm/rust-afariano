@@ -17,7 +17,7 @@ use serde_json::Value;
 use crate::accounts;
 use crate::app::{AppState, Shared};
 use crate::error::{AppError, AppResult};
-use crate::models::{RUNNER_COLS, Runner, User};
+use crate::models::{Job, RUNNER_COLS, Runner, User};
 use crate::util::{b64url, ct_eq, hash_token, new_token, sha256};
 
 const SESSION_COOKIE: &str = "rf_session";
@@ -577,6 +577,26 @@ impl FromRequestParts<Shared> for TokenUser2 {
     async fn from_request_parts(parts: &mut Parts, state: &Shared) -> Result<Self, Self::Rejection> {
         let token = bearer(&parts.headers).ok_or(AppError::Unauthorized)?;
         user_by_pat(state, token).await?.map(TokenUser2).ok_or(AppError::Unauthorized)
+    }
+}
+
+/// Caller of the pipeline calls that a job may make: an account (`rfp_…`), or a
+/// running job with its own `CI_JOB_TOKEN` (`rfj_…`), which reaches only its own
+/// repository (`access::job_repo`).
+pub enum ApiCaller {
+    User(User),
+    Job(Box<Job>),
+}
+
+impl FromRequestParts<Shared> for ApiCaller {
+    type Rejection = AppError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &Shared) -> Result<Self, Self::Rejection> {
+        let token = bearer(&parts.headers).ok_or(AppError::Unauthorized)?;
+        if let Some(job) = job_by_token(state, token).await? {
+            return Ok(Self::Job(Box::new(crate::pipelines::get_job(state, job.id).await?)));
+        }
+        user_by_pat(state, token).await?.map(Self::User).ok_or(AppError::Unauthorized)
     }
 }
 

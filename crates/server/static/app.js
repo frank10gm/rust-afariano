@@ -104,6 +104,128 @@
     if (msg && !window.confirm(msg)) e.preventDefault();
   });
 
+  // ------------------------------------------------------------- live pages
+  // A page with data-live listens to that event stream. On each "change" it
+  // fetches itself and swaps in the data-live-region parts that differ; when a
+  // data-live-key differs (a manual job started, say) it reloads instead.
+  // data-live-seq is the server's change counter when the page was rendered: the
+  // stream pings at once if anything changed since. Hidden tabs drop the stream
+  // (over HTTP/1.1 browsers allow six connections per host) and catch up when
+  // shown again.
+  var Live = { connect: function () {}, refresh: function () {} };
+  var liveEl = document.querySelector("[data-live]");
+  if (liveEl) Live = (function () {
+    var base = liveEl.getAttribute("data-live");
+    var seq = liveEl.getAttribute("data-live-seq");
+    var es = null, wanted = false, retry = 1000, retryTimer = null;
+    var timer = null, busy = false, again = false, dirty = false, last = 0, stopped = false;
+
+    function close() {
+      clearTimeout(retryTimer);
+      if (es) { es.close(); es = null; }
+    }
+    function connect() {
+      wanted = true;
+      if (es || stopped || document.hidden) return;
+      clearTimeout(retryTimer);
+      es = new EventSource(base + (base.indexOf("?") < 0 ? "?" : "&") + "since=" + encodeURIComponent(seq));
+      es.addEventListener("open", function () { retry = 1000; });
+      es.addEventListener("change", refresh);
+      es.addEventListener("error", function () {
+        // Reconnect ourselves, so the stream hears the counter of what is on screen.
+        close();
+        retryTimer = setTimeout(connect, retry);
+        retry = Math.min(retry * 2, 60000);
+      });
+    }
+
+    function refresh() {
+      if (stopped) return;
+      if (document.hidden) { dirty = true; return; }
+      if (busy) { again = true; return; }
+      if (timer) return;
+      // A burst of changes (one job ends, the next starts) becomes one fetch.
+      timer = setTimeout(run, Math.max(150, last + 1000 - Date.now()));
+    }
+    function run() {
+      timer = null;
+      if (document.hidden) { dirty = true; return; }
+      busy = true;
+      last = Date.now();
+      fetch(window.location.href, { credentials: "same-origin", cache: "no-store" })
+        .then(function (r) {
+          // Signed out (sent to sign-in), gone or no longer allowed: leave the page be.
+          if (new URL(r.url).pathname !== window.location.pathname || (r.status >= 400 && r.status < 500)) {
+            throw "stop";
+          }
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.text();
+        })
+        .then(apply)
+        .catch(function (e) {
+          if (e === "stop") { stopped = true; close(); }
+          else setTimeout(refresh, 5000); // a restart, most likely
+        })
+        .then(function () {
+          busy = false;
+          if (again) { again = false; refresh(); }
+        });
+    }
+    function apply(html) {
+      var doc = new DOMParser().parseFromString(html, "text/html");
+      var mark = doc.querySelector("[data-live]");
+      if (!mark) throw "stop";
+      var keys = document.querySelectorAll("[data-live-key]");
+      for (var k = 0; k < keys.length; k++) {
+        var key = doc.getElementById(keys[k].id);
+        if (!key || key.getAttribute("data-live-key") !== keys[k].getAttribute("data-live-key")) {
+          stopped = true;
+          window.location.reload();
+          return;
+        }
+      }
+      var olds = document.querySelectorAll("[data-live-region]");
+      var news = [];
+      for (var i = 0; i < olds.length; i++) {
+        news.push(doc.getElementById(olds[i].id));
+        if (!news[i]) { stopped = true; window.location.reload(); return; }
+      }
+      for (i = 0; i < olds.length; i++) {
+        if (olds[i].outerHTML !== news[i].outerHTML) olds[i].replaceWith(document.adoptNode(news[i]));
+      }
+      if (doc.title) document.title = doc.title;
+      seq = mark.getAttribute("data-live-seq");
+      tick();
+    }
+
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden) { close(); return; }
+      if (dirty) { dirty = false; refresh(); }
+      if (wanted) connect();
+    });
+    return { connect: connect, refresh: refresh };
+  })();
+
+  // Running durations keep counting between changes (data-elapsed: seconds so
+  // far when rendered). Same format as the server's.
+  function pad2(n) { return n < 10 ? "0" + n : "" + n; }
+  function duration(s) {
+    s = Math.max(0, Math.floor(s));
+    if (s < 60) return s + "s";
+    if (s < 3600) return Math.floor(s / 60) + "m " + pad2(s % 60) + "s";
+    return Math.floor(s / 3600) + "h " + pad2(Math.floor((s % 3600) / 60)) + "m";
+  }
+  function tick() {
+    var now = Date.now();
+    document.querySelectorAll("[data-elapsed]").forEach(function (el) {
+      if (el._t0 === undefined) el._t0 = now - parseInt(el.getAttribute("data-elapsed"), 10) * 1000;
+      var text = duration((now - el._t0) / 1000);
+      if (el.textContent !== text) el.textContent = text;
+    });
+  }
+  // Often enough that a second never shows late; the DOM changes once a second.
+  if (liveEl) setInterval(tick, 250);
+
   // ------------------------------------------------------------- job log
   // ANSI SGR colours/bold into spans, one <div class="line"> per log line
   // (numbered by CSS), "\r" redraws the current line like a terminal.
@@ -174,18 +296,14 @@
       feed(JSON.parse(ev.data).t);
       if (follow) log.scrollTop = log.scrollHeight;
     });
-    es.addEventListener("end", function (ev) {
+    // The page's one connection: it also carries the pipeline's changes until the
+    // job ends, then the page's own stream takes over.
+    es.addEventListener("change", Live.refresh);
+    es.addEventListener("end", function () {
       es.close();
-      var data = JSON.parse(ev.data);
-      if (data.reload) setTimeout(function () { window.location.reload(); }, 600);
+      Live.connect();
     });
-  }
-
-  // Pages with running pipelines refresh themselves while visible.
-  var refresh = document.querySelector("[data-refresh]");
-  if (refresh) {
-    setTimeout(function () {
-      if (!document.hidden) window.location.reload();
-    }, parseInt(refresh.getAttribute("data-refresh"), 10) * 1000);
+  } else {
+    Live.connect();
   }
 })();

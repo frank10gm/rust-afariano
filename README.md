@@ -40,7 +40,7 @@ whole service had to fit in 200 MB. It now runs there, next to other apps.
 - **Sign in your way.** Local accounts with passwords, single sign-on through any
   OpenID Connect provider (Keycloak, Authentik, Authelia, Zitadel, Google…), or both.
 - **A UI that feels familiar.** Code browser, commits and diffs, pipeline graph, live
-  job logs, dark mode, works on a phone.
+  job logs, statuses that update in place as jobs run, dark mode, works on a phone.
 
 ## Memory, measured
 

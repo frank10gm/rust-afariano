@@ -46,8 +46,10 @@ Know these before you deploy:
   values to everyone who can read the repository, except values marked *secret*,
   which are also masked in job logs. Pass credentials as CI/CD variables instead.
 - **Tokens** (personal access tokens, runner tokens, job tokens) are stored as
-  SHA-256 hashes. Job tokens are valid only while their job runs and only for
-  cloning their own repository.
+  SHA-256 hashes. Job tokens are valid only while their job runs, and only for
+  their own repository: cloning it, reading its pipelines, and starting a
+  pipeline on the job's own branch or tag (`POST …/pipelines`). That pipeline
+  sees the variables the job's own pipeline sees, and cannot start another.
 - **Pull mirrors** copy a repository from another server (GitHub, Bitbucket, …)
   and refuse pushes, so the upstream decides what runs: anyone who can push to
   the upstream's protected branch reaches the protected variables here. Protect

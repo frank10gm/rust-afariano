@@ -28,6 +28,8 @@ pub struct NewPipeline<'a> {
     pub source: &'static str,
     pub user: Option<&'a User>,
     pub variables: Vec<PipelineVar>,
+    /// The job that asked for this pipeline with its job token (API only).
+    pub parent_job_id: Option<i64>,
 }
 
 #[derive(Debug)]
@@ -175,8 +177,9 @@ pub async fn create(state: &AppState, np: NewPipeline<'_>) -> anyhow::Result<Cre
     let (stages, yaml_vars) = plan.as_ref().map(|p| (p.stages.clone(), p.variables.clone())).unwrap_or_default();
     let pipeline_id: i64 = sqlx::query_scalar(
         "INSERT INTO pipelines (repo_id, iid, ref_name, ref_is_tag, sha, before_sha, source, status, variables, stages, \
-         yaml_vars, error, commit_title, created_by, finished_at) \
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, CASE WHEN $8 = 'failed' THEN now() END) RETURNING id",
+         yaml_vars, error, commit_title, created_by, finished_at, parent_job_id) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, CASE WHEN $8 = 'failed' THEN now() END, $15) \
+         RETURNING id",
     )
     .bind(np.repo.id)
     .bind(iid)
@@ -192,6 +195,7 @@ pub async fn create(state: &AppState, np: NewPipeline<'_>) -> anyhow::Result<Cre
     .bind(&error)
     .bind(commit.as_ref().map(|c| c.subject.as_str()).unwrap_or(""))
     .bind(np.user.map(|u| u.id))
+    .bind(np.parent_job_id)
     .fetch_one(&mut *tx)
     .await?;
     if let Some(plan) = &plan {
@@ -220,6 +224,8 @@ pub async fn create(state: &AppState, np: NewPipeline<'_>) -> anyhow::Result<Cre
     git.keep_around(pipeline_id, &np.sha).await;
     if plan.is_some() {
         advance(state, pipeline_id).await?;
+    } else {
+        state.pipeline_changed(np.repo.id, pipeline_id);
     }
     crate::commit_status::notify(state, pipeline_id);
     tracing::info!(repo = %np.repo.path(), iid, r#ref = %np.ref_name, source = np.source, "pipeline created");
@@ -337,17 +343,19 @@ pub async fn advance(state: &AppState, pipeline_id: i64) -> anyhow::Result<()> {
     }
     let p = pipeline_status(&jobs, &status);
     let terminal = matches!(p, "success" | "failed" | "canceled" | "skipped");
-    sqlx::query(
+    let repo_id: i64 = sqlx::query_scalar(
         "UPDATE pipelines SET status = $2, \
          started_at = CASE WHEN $2 = 'running' THEN COALESCE(started_at, now()) ELSE started_at END, \
-         finished_at = CASE WHEN $3 THEN COALESCE(finished_at, now()) ELSE NULL END WHERE id = $1",
+         finished_at = CASE WHEN $3 THEN COALESCE(finished_at, now()) ELSE NULL END WHERE id = $1 RETURNING repo_id",
     )
     .bind(pipeline_id)
     .bind(p)
     .bind(terminal)
-    .execute(&mut *tx)
+    .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
+    // Every job change ends here, so this one call keeps the live pages current.
+    state.pipeline_changed(repo_id, pipeline_id);
     if changed.iter().any(|(_, s)| *s == "pending") {
         state.jobs_ready.notify_waiters();
     }
@@ -684,6 +692,8 @@ pub async fn cancel_job(state: &AppState, job: &Job) -> anyhow::Result<()> {
                 .bind(job.id)
                 .execute(&state.db)
                 .await?;
+            // Still running, but the page shows the request and drops the Cancel button.
+            state.pipeline_changed(job.repo_id, job.pipeline_id);
         }
         "created" | "pending" | "manual" => {
             sqlx::query(

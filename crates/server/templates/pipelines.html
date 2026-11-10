@@ -4,7 +4,8 @@
 {% block repo_nav %}{% include "repo_nav.html" %}{% endblock %}
 {% block crumbs %}{% include "repo_crumbs.html" %}<span class="sep">/</span><span class="here">Pipelines</span>{% endblock %}
 {% block content %}
-{% if refresh %}<span data-refresh="5" hidden></span>{% endif %}
+{% call ui::live(live) %}{% endcall %}
+<div id="live-pipelines" data-live-region>
 <div class="page-head">
   <h1>Pipelines</h1>
   {% if nav.can_write() %}<div class="actions"><a class="btn confirm" href="/{{ nav.path }}/-/pipelines/new">{% call ui::i("play") %}{% endcall %}Run pipeline</a></div>{% endif %}
@@ -25,5 +26,6 @@
 <div class="pager">
   {% if !prev_url.is_empty() %}<a class="btn" href="{{ prev_url }}">Newer</a>{% endif %}
   {% if !next_url.is_empty() %}<a class="btn" href="{{ next_url }}">Older</a>{% endif %}
+</div>
 </div>
 {% endblock %}

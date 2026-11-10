@@ -2,6 +2,7 @@
 
 mod admin;
 mod ci;
+mod live;
 mod repo;
 mod settings;
 
@@ -34,6 +35,7 @@ pub fn router(state: Shared) -> Router {
     let pages = Router::new()
         .route("/", get(repo::home))
         .route("/-/new", get(repo::new_form).post(repo::create))
+        .route("/-/events", get(live::home_events))
         .route("/-/profile", get(settings::profile))
         .route("/-/profile/keys", post(settings::add_key))
         .route("/-/profile/keys/{id}/delete", post(settings::delete_key))
@@ -58,6 +60,7 @@ pub fn router(state: Shared) -> Router {
         .route("/{ns}/{name}/-/commit/{sha}", get(repo::commit))
         .route("/{ns}/{name}/-/pipelines", get(ci::pipelines))
         .route("/{ns}/{name}/-/pipelines/new", get(ci::new_pipeline_form).post(ci::run_pipeline))
+        .route("/{ns}/{name}/-/pipelines/events", get(live::repo_events))
         .route("/{ns}/{name}/-/pipelines/{iid}", get(ci::pipeline))
         .route("/{ns}/{name}/-/pipelines/{iid}/{action}", post(ci::pipeline_action))
         .route("/{ns}/{name}/-/jobs/{id}", get(ci::job))
@@ -288,6 +291,8 @@ pub struct PipelineRow {
     pub source: String,
     pub created_ago: String,
     pub duration: String,
+    /// Seconds so far while running: the page keeps counting (`data-elapsed`).
+    pub elapsed: Option<i64>,
     pub by: String,
     pub stages: Vec<StageDot>,
     /// Variables the run was started with, in the order given.
@@ -296,6 +301,21 @@ pub struct PipelineRow {
     pub vars_mode: bool,
     /// Show the ref chip; in variables mode only when it is not the default branch.
     pub show_ref: bool,
+    /// The job that started this pipeline with its job token (see `attach_stages`).
+    pub parent: Option<ParentJob>,
+    /// Pipelines that this one's jobs started.
+    pub started: Vec<PipelineLink>,
+}
+
+pub struct ParentJob {
+    pub name: String,
+    pub url: String,
+    pub pipeline: PipelineLink,
+}
+
+pub struct PipelineLink {
+    pub iid: i32,
+    pub url: String,
 }
 
 /// One run variable as the list shows it. A hidden value (secret, or from a pipeline
@@ -315,11 +335,14 @@ impl RowVar {
 
 impl PipelineRow {
     pub fn new(p: &Pipeline, repo_path: &str, by: Option<&str>) -> Self {
+        // Only a running pipeline has a live clock; one waiting on a manual job does not.
+        let elapsed = match (p.started_at, p.finished_at) {
+            (Some(s), None) if p.status == "running" => Some((chrono::Utc::now() - s).num_seconds().max(0)),
+            _ => None,
+        };
         let duration = match (p.started_at, p.finished_at) {
             (Some(s), Some(f)) => duration((f - s).num_seconds()),
-            // Only a running pipeline has a live clock; one waiting on a manual job does not.
-            (Some(s), None) if p.status == "running" => duration((chrono::Utc::now() - s).num_seconds()),
-            _ => String::new(),
+            _ => elapsed.map(duration).unwrap_or_default(),
         };
         Self {
             id: p.id,
@@ -334,11 +357,14 @@ impl PipelineRow {
             source: p.source.clone(),
             created_ago: ago(p.created_at),
             duration,
+            elapsed,
             by: by.unwrap_or("").to_string(),
             stages: Vec::new(),
             vars: p.variables.0.iter().map(RowVar::new).collect(),
             vars_mode: false,
             show_ref: true,
+            parent: None,
+            started: Vec::new(),
         }
     }
 
@@ -350,10 +376,6 @@ impl PipelineRow {
             self.show_ref = self.ref_is_tag || self.ref_name != repo.default_branch;
         }
         self
-    }
-
-    pub fn active(&self) -> bool {
-        matches!(self.status.as_str(), "created" | "pending" | "running")
     }
 
     pub fn label(&self) -> &'static str {
@@ -372,12 +394,49 @@ impl PipelineRow {
     }
 }
 
-/// Mini-graph data for a page of pipelines: one status per stage, in order.
+/// Which job started each pipeline, and which pipelines each one's jobs started.
+pub async fn attach_links(state: &Shared, rows: &mut [PipelineRow]) -> sqlx::Result<()> {
+    let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let parents: Vec<(i64, i64, String, i32)> = sqlx::query_as(
+        "SELECT p.id, j.id, j.name, up.iid FROM pipelines p JOIN jobs j ON j.id = p.parent_job_id \
+         JOIN pipelines up ON up.id = j.pipeline_id WHERE p.id = ANY($1)",
+    )
+    .bind(&ids)
+    .fetch_all(&state.db)
+    .await?;
+    let started: Vec<(i64, i32)> = sqlx::query_as(
+        "SELECT j.pipeline_id, c.iid FROM pipelines c JOIN jobs j ON j.id = c.parent_job_id \
+         WHERE j.pipeline_id = ANY($1) ORDER BY c.id",
+    )
+    .bind(&ids)
+    .fetch_all(&state.db)
+    .await?;
+    // A job token reaches only its own repository: the linked pipelines are in the row's.
+    let link = |rp: &str, iid: i32| PipelineLink { iid, url: format!("/{rp}/-/pipelines/{iid}") };
+    for row in rows.iter_mut() {
+        if let Some((_, job_id, name, iid)) = parents.iter().find(|p| p.0 == row.id) {
+            row.parent = Some(ParentJob {
+                name: name.clone(),
+                url: format!("/{}/-/jobs/{job_id}", row.repo_path),
+                pipeline: link(&row.repo_path, *iid),
+            });
+        }
+        row.started = started.iter().filter(|s| s.0 == row.id).map(|s| link(&row.repo_path, s.1)).collect();
+    }
+    Ok(())
+}
+
+/// Mini-graph data for a page of pipelines (one status per stage, in order), and
+/// the links between pipelines (`attach_links`).
 pub async fn attach_stages(state: &Shared, rows: &mut [PipelineRow]) -> sqlx::Result<()> {
     let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
     if ids.is_empty() {
         return Ok(());
     }
+    attach_links(state, rows).await?;
     let jobs: Vec<(i64, i32, String, String, bool)> = sqlx::query_as(
         "SELECT pipeline_id, stage_idx, stage, status, allow_failure FROM jobs \
          WHERE pipeline_id = ANY($1) AND NOT retried ORDER BY pipeline_id, stage_idx, id",
@@ -428,6 +487,8 @@ pub struct JobRow {
     pub vis: String,
     pub allow_failure: bool,
     pub duration: String,
+    /// Seconds so far while running (see `PipelineRow::elapsed`).
+    pub elapsed: Option<i64>,
     pub failure_reason: String,
     pub environment: String,
     pub can_play: bool,
@@ -445,6 +506,7 @@ impl JobRow {
             vis: if j.status == "failed" && j.allow_failure { "warning".into() } else { j.status.clone() },
             allow_failure: j.allow_failure,
             duration: j.duration_secs().map(duration).unwrap_or_default(),
+            elapsed: j.duration_secs().filter(|_| j.status == "running").map(|s| s.max(0)),
             failure_reason: j.failure_reason.clone().unwrap_or_default().replace('_', " "),
             environment: j.environment.clone().unwrap_or_default(),
             can_play: j.status == "manual",

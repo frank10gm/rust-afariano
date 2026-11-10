@@ -4,6 +4,9 @@ Every call takes a personal access token: `Authorization: Bearer rfp_…`. Creat
 one under *SSH keys and tokens* in the web UI, or, as an administrator, for a
 service account with `POST /api/v1/users/{user}/tokens`.
 
+A running job can also call `POST …/pipelines` and `GET …/pipelines/{iid}` of its own
+repository with its `CI_JOB_TOKEN` (see *Pipelines and jobs*).
+
 The token acts as its account, with the same rules as the web UI:
 
 - **Repository** calls need a role in that repository: *read*, *write* or
@@ -100,8 +103,25 @@ Values cannot be read back through the API; maintainers can see them in the web 
 | `POST /repos/{ns}/{name}/jobs/{id}/cancel` | write | → job |
 
 A pipeline is `{"iid", "status", "ref", "sha", "source", "error", "web_url",
-"jobs": [{"id", "name", "stage", "status", "when", "environment",
-"failure_reason", "web_url"}]}`; a job answer is `{"id", "name", "status", "web_url"}`.
+"started_by_job", "started_pipelines", "jobs": [{"id", "name", "stage", "status", "when",
+"environment", "failure_reason", "web_url"}]}`; a job answer is `{"id", "name", "status", "web_url"}`.
+`started_by_job` is `{"id", "name", "pipeline_iid"}` for a pipeline a job started with
+its job token, else `null`; `started_pipelines` lists the `iid`s its own jobs started.
+
+**From a job.** A job can start a pipeline with `Authorization: Bearer $CI_JOB_TOKEN`
+instead of a personal access token, and read its repository's pipelines the same way.
+The new pipeline has `source` `api`, runs as the account that started the job's
+pipeline, and its pages say *Started by `<job>` in #`<iid>`*. The token works only while
+the job runs and only for its own repository; it starts pipelines only on the job's own
+`ref` (`400` otherwise), so they see no variables the job's pipeline could not, and a
+pipeline started this way cannot start another (`400`), so jobs cannot loop. A typical
+use: a push pipeline whose only job decides whether to release, then starts the
+release pipeline:
+
+```sh
+curl -s -X POST -H "Authorization: Bearer $CI_JOB_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"ref\": \"$CI_COMMIT_REF_NAME\"}" "$CI_SERVER_URL/api/v1/repos/$CI_PROJECT_PATH/pipelines"
+```
 
 ```sh
 iid=$(curl -s "${auth[@]}" -X POST $API/repos/acme/site/pipelines -d '{"ref": "staging"}' | jq .iid)

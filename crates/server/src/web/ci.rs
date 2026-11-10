@@ -14,6 +14,7 @@ use tokio::sync::{broadcast, mpsc};
 use tokio_stream::StreamExt as _;
 use tokio_stream::wrappers::ReceiverStream;
 
+use super::live::{LiveUrl, change_event};
 use super::{JobRow, PipelineRow, RepoNav, clean_vars, load_repo, render, user_names};
 use crate::access::Role;
 use crate::app::Shared;
@@ -35,7 +36,7 @@ struct PipelinesPage {
     show_repo: bool,
     prev_url: String,
     next_url: String,
-    refresh: bool,
+    live: LiveUrl,
 }
 
 #[derive(Deserialize)]
@@ -52,6 +53,7 @@ pub async fn pipelines(
 ) -> AppResult<Response> {
     const PER_PAGE: i64 = 30;
     let (repo, role) = load_repo(&state, &user, &ns, &name, Role::Read).await?;
+    let live = LiveUrl::new(&state, format!("/{}/-/pipelines/events", repo.path()));
     let page = q.page.max(0);
     let list: Vec<Pipeline> = sqlx::query_as(sql!(
         "SELECT {PIPELINE_COLS} FROM pipelines WHERE repo_id = $1 ORDER BY id DESC LIMIT $2 OFFSET $3"
@@ -72,7 +74,6 @@ pub async fn pipelines(
         })
         .collect();
     super::attach_stages(&state, &mut rows).await?;
-    let refresh = rows.iter().any(PipelineRow::active);
     render(PipelinesPage {
         user,
         nav: RepoNav::new(&repo, role, "pipelines"),
@@ -80,7 +81,7 @@ pub async fn pipelines(
         show_repo: false,
         prev_url: if page > 0 { format!("/{rp}/-/pipelines?page={}", page - 1) } else { String::new() },
         next_url: if has_next { format!("/{rp}/-/pipelines?page={}", page + 1) } else { String::new() },
-        refresh,
+        live,
     })
 }
 
@@ -293,6 +294,7 @@ pub async fn run_pipeline(
         source: "web",
         user: Some(&user),
         variables: vars_clean,
+        parent_job_id: None,
     };
     let msg = match pipelines::create(&state, np).await? {
         Created::Pipeline(iid) => {
@@ -322,7 +324,7 @@ struct PipelinePage {
     created_at: String,
     can_cancel: bool,
     can_retry: bool,
-    refresh: bool,
+    live: LiveUrl,
 }
 
 async fn load_pipeline(state: &Shared, repo: &Repo, iid: i32) -> AppResult<Pipeline> {
@@ -340,6 +342,7 @@ pub async fn pipeline(
     Path((ns, name, iid)): Path<(String, String, i32)>,
 ) -> AppResult<Response> {
     let (repo, role) = load_repo(&state, &user, &ns, &name, Role::Read).await?;
+    let live = LiveUrl::new(&state, format!("/{}/-/pipelines/events?pipeline={iid}", repo.path()));
     let p = load_pipeline(&state, &repo, iid).await?;
     let jobs: Vec<Job> = sqlx::query_as(sql!(
         "SELECT {JOB_COLS} FROM jobs WHERE pipeline_id = $1 AND NOT retried ORDER BY stage_idx, id"
@@ -349,7 +352,8 @@ pub async fn pipeline(
     .await?;
     let rp = repo.path();
     let names = user_names(&state, p.created_by.into_iter()).await?;
-    let row = PipelineRow::new(&p, &rp, p.created_by.and_then(|id| names.get(&id)).map(String::as_str));
+    let mut row = PipelineRow::new(&p, &rp, p.created_by.and_then(|id| names.get(&id)).map(String::as_str));
+    super::attach_links(&state, std::slice::from_mut(&mut row)).await?;
     let mut stages: Vec<StageCol> = Vec::new();
     for (idx, stage) in p.stages.iter().enumerate() {
         let col: Vec<JobRow> =
@@ -360,7 +364,6 @@ pub async fn pipeline(
     }
     let can_cancel = jobs.iter().any(|j| matches!(j.status.as_str(), "created" | "pending" | "running" | "manual"));
     let can_retry = jobs.iter().any(|j| matches!(j.status.as_str(), "failed" | "canceled"));
-    let refresh = row.active() || jobs.iter().any(|j| matches!(j.status.as_str(), "pending" | "running"));
     render(PipelinePage {
         user,
         nav: RepoNav::new(&repo, role, "pipelines"),
@@ -372,7 +375,7 @@ pub async fn pipeline(
         stages,
         can_cancel,
         can_retry,
-        refresh,
+        live,
     })
 }
 
@@ -409,6 +412,7 @@ struct JobPage {
     raw_url: String,
     retried_from: String,
     cancel_requested: bool,
+    live: LiveUrl,
 }
 
 async fn load_job(state: &Shared, repo: &Repo, id: i64) -> AppResult<Job> {
@@ -425,9 +429,12 @@ pub async fn job(
     Path((ns, name, id)): Path<(String, String, i64)>,
 ) -> AppResult<Response> {
     let (repo, role) = load_repo(&state, &user, &ns, &name, Role::Read).await?;
+    // Before the job is read; the URL needs its pipeline.
+    let seq = state.change_seq();
     let job = load_job(&state, &repo, id).await?;
     let p = pipelines::get_pipeline(&state, job.pipeline_id).await?;
     let rp = repo.path();
+    let live = LiveUrl { url: format!("/{rp}/-/pipelines/events?pipeline={}", p.iid), seq };
     let runner = match job.runner_id {
         Some(rid) => sqlx::query_as::<_, Runner>(sql!("SELECT {RUNNER_COLS} FROM runners WHERE id = $1"))
             .bind(rid)
@@ -459,6 +466,7 @@ pub async fn job(
         retried_from: retried_from.map(|n| format!("/{rp}/-/jobs/{n}")).unwrap_or_default(),
         cancel_requested: job.cancel_requested && job.status == "running",
         job: JobRow::new(&job, &rp),
+        live,
     })
 }
 
@@ -578,10 +586,43 @@ async fn stream_log(state: Shared, job: Job, tx: mpsc::Sender<Event>) {
         };
     }
     catch_up!();
+    // The job page keeps one connection: changes of the job's pipeline come over
+    // this stream too while it is open (the page opens the pipeline stream after).
+    let mut changes = Some(state.pipeline_events.subscribe());
+    let quiet = || tokio::time::Instant::now() + Duration::from_secs(10);
+    let mut check_at = quiet();
     let mut finished = started_terminal;
     while !finished {
-        match tokio::time::timeout(Duration::from_secs(10), rx.recv()).await {
-            Ok(Ok(LogEvent::Chunk { offset, data })) => {
+        let ev = tokio::select! {
+            ev = rx.recv() => ev,
+            c = async { changes.as_mut().expect("guarded").recv().await }, if changes.is_some() => {
+                let ours = match c {
+                    Ok(c) => c.pipeline_id == job.pipeline_id,
+                    Err(broadcast::error::RecvError::Lagged(_)) => true,
+                    Err(broadcast::error::RecvError::Closed) => {
+                        changes = None;
+                        false
+                    }
+                };
+                if ours && tx.send(change_event()).await.is_err() {
+                    return;
+                }
+                continue;
+            }
+            _ = tokio::time::sleep_until(check_at) => {
+                // Quiet: check whether the job ended without us hearing about it.
+                check_at = quiet();
+                match pipelines::get_job(&state, job.id).await {
+                    Ok(j) if is_terminal(&j.status) => finished = true,
+                    Ok(_) => {}
+                    Err(_) => finished = true,
+                }
+                continue;
+            }
+        };
+        check_at = quiet();
+        match ev {
+            Ok(LogEvent::Chunk { offset, data }) => {
                 let end = offset + data.len() as u64;
                 if end <= pos {
                     continue;
@@ -598,16 +639,8 @@ async fn stream_log(state: Shared, job: Job, tx: mpsc::Sender<Event>) {
                     return;
                 }
             }
-            Ok(Ok(LogEvent::End)) | Ok(Err(broadcast::error::RecvError::Closed)) => finished = true,
-            Ok(Err(broadcast::error::RecvError::Lagged(_))) => catch_up!(),
-            Err(_) => {
-                // Quiet: check whether the job ended without us hearing about it.
-                match pipelines::get_job(&state, job.id).await {
-                    Ok(j) if is_terminal(&j.status) => finished = true,
-                    Ok(_) => {}
-                    Err(_) => finished = true,
-                }
-            }
+            Ok(LogEvent::End) | Err(broadcast::error::RecvError::Closed) => finished = true,
+            Err(broadcast::error::RecvError::Lagged(_)) => catch_up!(),
         }
     }
     catch_up!();
@@ -615,7 +648,7 @@ async fn stream_log(state: Shared, job: Job, tx: mpsc::Sender<Event>) {
         let _ = tx.send(log_event(&String::from_utf8_lossy(&carry))).await;
     }
     let status = pipelines::get_job(&state, job.id).await.map(|j| j.status).unwrap_or_default();
-    let end = serde_json::json!({ "status": status, "reload": !started_terminal });
+    let end = serde_json::json!({ "status": status });
     let _ = tx.send(Event::default().event("end").data(end.to_string())).await;
 }
 
@@ -676,7 +709,7 @@ mod tests {
             show_repo: false,
             prev_url: String::new(),
             next_url: String::new(),
-            refresh: false,
+            live: LiveUrl { url: "/acme/web/-/pipelines/events".into(), seq: 42 },
         }
         .render()
         .unwrap()
@@ -708,6 +741,7 @@ mod tests {
             created_at: chrono::Utc::now(),
             started_at: None,
             finished_at: None,
+            parent_job_id: None,
         };
         let html = |on| {
             let repo = test_repo(on);
@@ -721,6 +755,90 @@ mod tests {
         let off = html(false);
         assert!(off.contains("Fix the login form") && off.contains("0123abcd"));
         assert!(!off.contains("staging") && !off.contains("s3cr3t-value"));
+    }
+
+    /// The list listens to its repository's changes and swaps its rows in place; a
+    /// running pipeline's duration keeps counting in the page.
+    #[test]
+    fn pipeline_list_is_live() {
+        let repo = test_repo(false);
+        let now = chrono::Utc::now();
+        let pipeline = |iid: i32, status: &str, finished: bool| crate::models::Pipeline {
+            id: iid.into(),
+            repo_id: 1,
+            iid,
+            ref_name: "main".into(),
+            ref_is_tag: false,
+            sha: "0123abcd4567ef890123abcd4567ef890123abcd".into(),
+            before_sha: String::new(),
+            source: "push".into(),
+            status: status.into(),
+            variables: sqlx::types::Json(Vec::new()),
+            stages: Vec::new(),
+            yaml_vars: sqlx::types::Json(Vec::new()),
+            error: None,
+            commit_title: format!("Commit {iid}"),
+            created_by: None,
+            created_at: now,
+            started_at: Some(now - chrono::Duration::seconds(75)),
+            finished_at: finished.then_some(now - chrono::Duration::seconds(5)),
+            parent_job_id: None,
+        };
+        let running = PipelineRow::new(&pipeline(2, "running", false), "acme/web", None);
+        assert!(running.elapsed.is_some_and(|s| (75..80).contains(&s)));
+        let done = PipelineRow::new(&pipeline(1, "success", true), "acme/web", None);
+        assert_eq!(done.elapsed, None);
+        assert_eq!(done.duration, "1m 10s");
+        let html = pipelines_page(&repo, Role::Read, vec![running, done]);
+        assert!(html.contains(r#"data-live="/acme/web/-/pipelines/events" data-live-seq="42""#));
+        assert!(html.contains(r#"id="live-pipelines" data-live-region"#));
+        assert_eq!(html.matches("data-elapsed=").count(), 1, "only the running one counts");
+        assert!(!html.contains("data-refresh"), "no more timed reloads");
+    }
+
+    /// A pipeline started by a job's token names the job and its pipeline; that
+    /// pipeline names the ones its jobs started.
+    #[test]
+    fn pipeline_list_links_started_pipelines() {
+        let repo = test_repo(false);
+        let pipeline = |iid: i32, source: &str| crate::models::Pipeline {
+            id: iid.into(),
+            repo_id: 1,
+            iid,
+            ref_name: "main".into(),
+            ref_is_tag: false,
+            sha: "2572b3e5c9a4cca1ef268e5431974bc48bfddbfb".into(),
+            before_sha: String::new(),
+            source: source.into(),
+            status: "success".into(),
+            variables: sqlx::types::Json(Vec::new()),
+            stages: Vec::new(),
+            yaml_vars: sqlx::types::Json(Vec::new()),
+            error: None,
+            commit_title: "scheduled badge".into(),
+            created_by: None,
+            created_at: chrono::Utc::now(),
+            started_at: None,
+            finished_at: None,
+            parent_job_id: None,
+        };
+        let link = |iid| crate::web::PipelineLink { iid, url: format!("/acme/web/-/pipelines/{iid}") };
+        let mut child = PipelineRow::new(&pipeline(10, "api"), "acme/web", Some("Mailstream CI"));
+        child.parent = Some(crate::web::ParentJob {
+            name: "release:gate".into(),
+            url: "/acme/web/-/jobs/57".into(),
+            pipeline: link(9),
+        });
+        let mut gate = PipelineRow::new(&pipeline(9, "push"), "acme/web", None);
+        gate.started = vec![link(10), link(11)];
+        let html = pipelines_page(&repo, Role::Read, vec![child, gate]);
+        assert!(html.contains(
+            r#"<span>Started by <a href="/acme/web/-/jobs/57">release:gate</a> in <a href="/acme/web/-/pipelines/9">#9</a></span>"#
+        ));
+        assert!(!html.contains("Started through the API"), "the job replaces the account");
+        assert!(html.contains(
+            r#"<span>Pushed · started <a href="/acme/web/-/pipelines/10">#10</a>, <a href="/acme/web/-/pipelines/11">#11</a></span>"#
+        ));
     }
 
     /// Readers see no Run pipeline button and no Settings tab; maintainers see both.

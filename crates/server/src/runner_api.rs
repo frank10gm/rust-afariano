@@ -12,10 +12,10 @@ use rust_afariano_proto as proto;
 use serde::Deserialize;
 
 use crate::app::Shared;
-use crate::auth::{self, TokenUser2, bearer};
+use crate::auth::{self, ApiCaller, bearer};
 use crate::error::{AppError, AppResult, bad};
 use crate::logs::Append;
-use crate::models::{PipelineVar, Runner};
+use crate::models::{PipelineVar, Runner, User};
 use crate::pipelines::{self, Created, NewPipeline};
 
 async fn runner_auth(state: &Shared, headers: &HeaderMap) -> AppResult<Runner> {
@@ -145,13 +145,44 @@ pub struct TriggerBody {
 
 /// `POST /api/v1/repos/{ns}/{name}/pipelines` with `Authorization: Bearer rfp_…`
 /// and `{"ref": "main", "variables": [{"key": "X", "value": "1"}]}`.
+///
+/// A running job may call it with its `CI_JOB_TOKEN` instead: the new pipeline then
+/// remembers the job ("Started by release:gate in #9"). Such a job starts pipelines
+/// only on its own ref, as the account that started its pipeline, so it reaches no
+/// variables its own pipeline could not; and a pipeline started this way starts no
+/// more, so jobs cannot loop.
 pub async fn trigger_pipeline(
     State(state): State<Shared>,
     Path((ns, name)): Path<(String, String)>,
-    TokenUser2(user): TokenUser2,
+    caller: ApiCaller,
     Json(body): Json<TriggerBody>,
 ) -> AppResult<Response> {
-    let (repo, _) = crate::access::repo(&state, &user, &ns, &name, crate::access::Role::Write).await?;
+    let (repo, user, parent) = match caller {
+        ApiCaller::User(user) => {
+            let (repo, _) = crate::access::repo(&state, &user, &ns, &name, crate::access::Role::Write).await?;
+            (repo, Some(user), None)
+        }
+        ApiCaller::Job(job) => {
+            let repo = crate::access::job_repo(&state, &job, &ns, &name).await?;
+            let up = pipelines::get_pipeline(&state, job.pipeline_id).await?;
+            if up.parent_job_id.is_some() {
+                return Err(bad("a pipeline started by a job cannot start more pipelines"));
+            }
+            if body.ref_name != up.ref_name {
+                return Err(bad(format!("a job token starts pipelines only on its own ref `{}`", up.ref_name)));
+            }
+            let user = match up.created_by {
+                Some(id) => {
+                    sqlx::query_as::<_, User>("SELECT id, email, name FROM users WHERE id = $1")
+                        .bind(id)
+                        .fetch_optional(&state.db)
+                        .await?
+                }
+                None => None,
+            };
+            (repo, user, Some((job, up)))
+        }
+    };
     if repo.is_mirror()
         && let Err(e) = crate::mirror::sync_for_pipeline(&state, &repo).await
     {
@@ -168,6 +199,11 @@ pub async fn trigger_pipeline(
         return Err(bad(format!("unknown branch or tag `{}`", body.ref_name)));
     };
     let sha = git.resolve(&full).await?.ok_or_else(|| bad("ref vanished"))?;
+    if let Some((_, up)) = &parent
+        && up.ref_is_tag != is_tag
+    {
+        return Err(bad(format!("a job token starts pipelines only on its own ref `{}`", up.ref_name)));
+    }
     let np = NewPipeline {
         repo: &repo,
         ref_name: body.ref_name.clone(),
@@ -175,10 +211,16 @@ pub async fn trigger_pipeline(
         sha,
         before_sha: crate::git::ZERO_SHA.into(),
         source: "api",
-        user: Some(&user),
+        user: user.as_ref(),
         variables: crate::web::clean_vars(body.variables)?,
+        parent_job_id: parent.as_ref().map(|(job, _)| job.id),
     };
-    match pipelines::create(&state, np).await? {
+    let created = pipelines::create(&state, np).await?;
+    if let (Created::Pipeline(_), Some((_, up))) = (&created, &parent) {
+        // Its page now names the new pipeline ("started #10").
+        state.pipeline_changed(repo.id, up.id);
+    }
+    match created {
         Created::Pipeline(iid) => Ok((
             StatusCode::CREATED,
             Json(serde_json::json!({

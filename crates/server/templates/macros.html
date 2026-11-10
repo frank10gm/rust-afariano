@@ -6,6 +6,21 @@
 <svg class="ci-icon s-{{ st }}" aria-hidden="true"><use href="/-/static/icons.svg?v={{ crate::web::ASSET_V }}#st-{{ st }}"></use></svg>
 {%- endmacro -%}
 
+{#- Marks a live page: app.js listens on `l.url` and swaps its `data-live-region`s. -#}
+{%- macro live(l) -%}
+<span data-live="{{ l.url }}" data-live-seq="{{ l.seq }}" hidden></span>
+{%- endmacro -%}
+
+{#- Who started pipeline `p`, and what its jobs started: "Started by release:gate in #9", "Pushed by Ana · started #10". -#}
+{#- Inline text (not flex items, as the spans of .meta-line are): the spaces stay as written. -#}
+{%- macro trigger(p) -%}
+<span>
+{%- if let Some(up) = p.parent -%}Started by <a href="{{ up.url }}">{{ up.name }}</a> in <a href="{{ up.pipeline.url }}">#{{ up.pipeline.iid }}</a>
+{%- else -%}{{ p.trigger() }}{%- endif -%}
+{%- for c in p.started %}{% if loop.first %} · started {% else %}, {% endif %}<a href="{{ c.url }}">#{{ c.iid }}</a>{% endfor -%}
+</span>
+{%- endmacro -%}
+
 {%- macro badge(st, label) -%}
 <span class="ci-badge s-{{ st }}"><svg class="ci-icon" aria-hidden="true"><use href="/-/static/icons.svg?v={{ crate::web::ASSET_V }}#st-{{ st }}"></use></svg>{{ label }}</span>
 {%- endmacro -%}

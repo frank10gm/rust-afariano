@@ -39,9 +39,11 @@ struct HomePage {
     repos: Vec<RepoRow>,
     pipelines: Vec<PipelineRow>,
     show_repo: bool,
+    live: super::live::LiveUrl,
 }
 
 pub async fn home(State(state): State<Shared>, CurrentUser(user): CurrentUser) -> AppResult<Response> {
+    let live = super::live::LiveUrl::new(&state, "/-/events".into());
     // None: an administrator, who sees every repository.
     let visible = access::visible_repo_ids(&state, &user).await?;
     let repos: Vec<Repo> = sqlx::query_as(sql!(
@@ -101,7 +103,7 @@ pub async fn home(State(state): State<Shared>, CurrentUser(user): CurrentUser) -
         })
         .collect();
     super::attach_stages(&state, &mut pipelines).await?;
-    render(HomePage { user, repos: rows, pipelines, show_repo: true })
+    render(HomePage { user, repos: rows, pipelines, show_repo: true, live })
 }
 
 // ---------------------------------------------------------------- new repo

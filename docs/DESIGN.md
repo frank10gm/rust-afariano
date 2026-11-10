@@ -119,6 +119,30 @@ Job statuses: `created` (waiting on deps) → `pending` (runner may take it) →
   never advertised, never pushable; `uploadpack.allowTipSHA1InWant`), so runners
   and retries still fetch it after a force push.
 
+## Live pages (`web/live.rs`, `app.js`)
+
+The home page, the pipeline list, a pipeline and a job update in place, without
+polling. Every job change ends in `pipelines::advance` (or `create`), which, once
+committed, bumps a change counter and sends `(repo, pipeline)` on a
+`tokio::sync::broadcast` channel. Single process, so no Postgres `LISTEN` needed.
+
+- Streams are server-sent events, the same as the job log: one way is all a page
+  needs, reconnects are plain GETs, and the nginx settings for logs already fit.
+  `GET /{ns}/{name}/-/pipelines/events[?pipeline=<iid>]` (read access) and
+  `GET /-/events` (repositories the user sees) send `change` with no data; the
+  page fetches its own URL again, so the usual access checks apply, and swaps the
+  `data-live-region` elements that differ. A different `data-live-key` (a manual
+  job that started) reloads the page.
+- Missed changes: a page carries the counter read before its data was loaded
+  (`data-live-seq`); a stream opened with another `?since=` pings at once. The
+  counter starts at the clock, so a page from before a restart is always behind.
+  The page reconnects itself (backoff 1 s to 60 s) with the counter of what it
+  shows, and drops its stream while hidden: over HTTP/1.1 browsers allow six
+  connections per host.
+- A job page keeps one connection: its log stream also carries the pipeline's
+  changes, and the pipeline stream opens when the log ends.
+- Running durations count in the page (`data-elapsed`), between changes.
+
 ## Pull mirrors (`mirror.rs`)
 
 A repository with `mirror_url` copies an upstream; its `mirrors` row holds the

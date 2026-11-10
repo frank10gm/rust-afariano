@@ -1,8 +1,9 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use sqlx::PgPool;
-use tokio::sync::{Notify, Semaphore};
+use tokio::sync::{Notify, Semaphore, broadcast};
 
 use crate::accounts::Limiter;
 use crate::config::Config;
@@ -10,6 +11,13 @@ use crate::logs::LogHub;
 use crate::models::{REPO_COLS, Repo};
 
 pub type Shared = Arc<AppState>;
+
+/// A pipeline or one of its jobs changed. Pages showing it fetch themselves again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PipelineChanged {
+    pub repo_id: i64,
+    pub pipeline_id: i64,
+}
 
 pub struct AppState {
     pub cfg: Config,
@@ -37,6 +45,12 @@ pub struct AppState {
     /// Pipelines whose status changed, for the commit status worker.
     pub status_tx: tokio::sync::mpsc::UnboundedSender<i64>,
     pub status_rx: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<i64>>>,
+    /// Every pipeline change, for the live pages (server-sent events).
+    pub pipeline_events: broadcast::Sender<PipelineChanged>,
+    /// Bumped on every pipeline change. Pages carry the value they were rendered at,
+    /// so a stream opened later knows whether they are behind. Starts at the clock
+    /// (microseconds), so a page from before a restart never matches.
+    change_seq: AtomicU64,
 }
 
 impl AppState {
@@ -51,6 +65,13 @@ impl AppState {
             mirror_queued: Mutex::new(HashSet::new()),
             status_tx,
             status_rx: Mutex::new(Some(status_rx)),
+            pipeline_events: broadcast::channel(256).0,
+            change_seq: AtomicU64::new(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_micros() as u64)
+                    .unwrap_or(1),
+            ),
             cipher,
             setup_token: Mutex::new(None),
             limiter: Limiter::default(),
@@ -64,6 +85,18 @@ impl AppState {
             jobs_ready: Notify::new(),
             push_locks: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// Call after the change is committed, so pages fetched on the ping see it.
+    pub fn pipeline_changed(&self, repo_id: i64, pipeline_id: i64) {
+        self.change_seq.fetch_add(1, Ordering::SeqCst);
+        // No receivers (no live page open) is not an error.
+        let _ = self.pipeline_events.send(PipelineChanged { repo_id, pipeline_id });
+    }
+
+    /// Read before loading what a live page shows (see `change_seq`).
+    pub fn change_seq(&self) -> u64 {
+        self.change_seq.load(Ordering::SeqCst)
     }
 
     pub fn close_setup(&self) {

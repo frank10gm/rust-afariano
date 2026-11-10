@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 
 use crate::access::{self, Role};
 use crate::app::{AppState, Shared};
-use crate::auth::TokenUser2;
+use crate::auth::{ApiCaller, TokenUser2};
 use crate::error::{AppError, AppResult, bad};
 use crate::models::{JOB_COLS, Job, PIPELINE_COLS, Pipeline, RUNNER_COLS, Repo, Runner, User, Variable};
 use crate::{ops, pipelines};
@@ -484,6 +484,23 @@ async fn pipeline_json(state: &AppState, repo: &Repo, p: &Pipeline) -> AppResult
     .fetch_all(&state.db)
     .await?;
     let base = format!("{}/{}", state.cfg.public_url, repo.path());
+    // The job that started this pipeline, and the pipelines this one's jobs started.
+    let parent: Option<(i64, String, i32)> =
+        match p.parent_job_id {
+            Some(id) => sqlx::query_as(
+                "SELECT j.id, j.name, up.iid FROM jobs j JOIN pipelines up ON up.id = j.pipeline_id WHERE j.id = $1",
+            )
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?,
+            None => None,
+        };
+    let started: Vec<i32> = sqlx::query_scalar(
+        "SELECT c.iid FROM pipelines c JOIN jobs j ON j.id = c.parent_job_id WHERE j.pipeline_id = $1 ORDER BY c.id",
+    )
+    .bind(p.id)
+    .fetch_all(&state.db)
+    .await?;
     Ok(json!({
         "iid": p.iid,
         "status": p.status,
@@ -492,6 +509,8 @@ async fn pipeline_json(state: &AppState, repo: &Repo, p: &Pipeline) -> AppResult
         "source": p.source,
         "error": p.error,
         "web_url": format!("{base}/-/pipelines/{}", p.iid),
+        "started_by_job": parent.map(|(id, name, iid)| json!({ "id": id, "name": name, "pipeline_iid": iid })),
+        "started_pipelines": started,
         "jobs": jobs.iter().map(|j| json!({
             "id": j.id,
             "name": j.name,
@@ -514,13 +533,17 @@ async fn load_pipeline(state: &AppState, repo: &Repo, iid: i32) -> AppResult<Pip
         .ok_or(AppError::NotFound)
 }
 
-/// `GET /api/v1/repos/{ns}/{name}/pipelines/{iid}` — status and jobs (read).
+/// `GET /api/v1/repos/{ns}/{name}/pipelines/{iid}` — status and jobs (read, or a job
+/// token of the same repository).
 pub async fn get_pipeline(
     State(state): State<Shared>,
-    TokenUser2(user): TokenUser2,
+    caller: ApiCaller,
     Path((ns, name, iid)): Path<(String, String, i32)>,
 ) -> AppResult<Json<Value>> {
-    let (repo, _) = access::repo(&state, &user, &ns, &name, Role::Read).await?;
+    let repo = match &caller {
+        ApiCaller::User(user) => access::repo(&state, user, &ns, &name, Role::Read).await?.0,
+        ApiCaller::Job(job) => access::job_repo(&state, job, &ns, &name).await?,
+    };
     let p = load_pipeline(&state, &repo, iid).await?;
     Ok(Json(pipeline_json(&state, &repo, &p).await?))
 }

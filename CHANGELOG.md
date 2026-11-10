@@ -4,6 +4,39 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- A job can start a pipeline through the API with its own `CI_JOB_TOKEN`, and read
+  its repository's pipelines with it, so a release gate no longer needs a personal
+  access token stored as a CI/CD variable. The new pipeline remembers the job: its
+  pages say *Started by release:gate in #9* instead of *Started through the API*,
+  and #9 says *started #10*, so the two pipelines of one commit no longer look like
+  a duplicate. Only on the job's own branch or tag, and a pipeline started this way
+  cannot start another. Pipeline JSON has `started_by_job` and `started_pipelines`.
+
+### Changed
+
+- Pipeline statuses update in place, as they change: the home page, the pipeline
+  list, a pipeline and a job no longer reload every few seconds while something
+  runs. The server pushes a ping over server-sent events (as the job log already
+  did) and the page swaps in only the parts that changed, so scrolling, open
+  menus and the job log stay as they are. New pipelines appear in the list on
+  their own, and running durations count up every second. A hidden tab stops
+  listening and catches up when shown again.
+
+### Upgrading
+
+Migration 6 adds `pipelines.parent_job_id`. To roll back:
+`DROP INDEX pipelines_parent_job; ALTER TABLE pipelines DROP COLUMN parent_job_id;
+DELETE FROM _sqlx_migrations WHERE version = 6;`
+
+Nothing to do for live updates behind the nginx example (`proxy_buffering off` was already needed
+for job logs). Behind a proxy that speaks only HTTP/1.1 to browsers, each open
+pipeline page holds one of the browser's six connections per host; enable HTTP/2
+there (`http2 on;` in nginx) if many tabs are kept open.
+
 ## [0.7.0] - 2026-11-05
 
 ### Added
@@ -252,6 +285,7 @@ First public release.
   clones of a 216 MB repository at once.
 - Container image, `docker-compose.yml`, and prebuilt runner binaries.
 
+[Unreleased]: https://github.com/frank10gm/rust-afariano/compare/v0.7.0...HEAD
 [0.7.0]: https://github.com/frank10gm/rust-afariano/releases/tag/v0.7.0
 [0.6.2]: https://github.com/frank10gm/rust-afariano/releases/tag/v0.6.2
 [0.6.1]: https://github.com/frank10gm/rust-afariano/releases/tag/v0.6.1

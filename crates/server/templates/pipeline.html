@@ -4,17 +4,18 @@
 {% block repo_nav %}{% include "repo_nav.html" %}{% endblock %}
 {% block crumbs %}{% include "repo_crumbs.html" %}<span class="sep">/</span><a href="/{{ nav.path }}/-/pipelines">Pipelines</a><span class="sep">/</span><span class="here">#{{ p.iid }}</span>{% endblock %}
 {% block content %}
-{% if refresh %}<span data-refresh="4" hidden></span>{% endif %}
+{% call ui::live(live) %}{% endcall %}
+<div id="live-pipeline" data-live-region>
 <div class="pipeline-head">
   <div style="min-width:0">
     <h1>{% call ui::badge(p.status, p.label()) %}{% endcall %} Pipeline #{{ p.iid }}</h1>
     <p class="title">{% if p.title.is_empty() %}No commit message{% else %}{{ p.title }}{% endif %}</p>
     <div class="meta-line">
-      <span>{% call ui::i("user") %}{% endcall %}{{ p.trigger() }}</span>
+      <span>{% if p.parent.is_some() %}{% call ui::i("pipeline") %}{% endcall %}{% else %}{% call ui::i("user") %}{% endcall %}{% endif %}{% call ui::trigger(p) %}{% endcall %}</span>
       <span class="pill">{% if p.ref_is_tag %}{% call ui::i("tag") %}{% endcall %}{% else %}{% call ui::i("branch") %}{% endcall %}{% endif %}{{ p.ref_name }}</span>
       <span>{% call ui::i("commit") %}{% endcall %}<a class="sha" href="{{ commit_url }}">{{ p.sha_short }}</a></span>
       <span>{% call ui::i("calendar") %}{% endcall %}{{ created_at }}</span>
-      {% if !p.duration.is_empty() %}<span>{% call ui::i("clock") %}{% endcall %}{{ p.duration }}</span>{% endif %}
+      {% if !p.duration.is_empty() %}<span>{% call ui::i("clock") %}{% endcall %}<span{% if let Some(s) = p.elapsed %} data-elapsed="{{ s }}"{% endif %}>{{ p.duration }}</span></span>{% endif %}
       {% if !variables.is_empty() %}<span>Variables {% for v in variables %}<code>{{ v }}</code> {% endfor %}</span>{% endif %}
     </div>
   </div>
@@ -36,7 +37,7 @@
       <div class="job">
         <span class="st" title="{{ j.label() }}">{% call ui::icon(j.vis) %}{% endcall %}</span>
         <a class="name" href="{{ j.url }}" title="{{ j.name }}: {{ j.label() }}">{{ j.name }}</a>
-        {% if !j.duration.is_empty() %}<span class="dur">{{ j.duration }}</span>{% endif %}
+        {% if !j.duration.is_empty() %}<span class="dur"{% if let Some(s) = j.elapsed %} data-elapsed="{{ s }}"{% endif %}>{{ j.duration }}</span>{% endif %}
         {% if nav.can_write() && j.can_play %}<form method="post" action="{{ j.url }}/play"><button class="btn icon sm" type="submit" title="Run {{ j.name }}" aria-label="Run {{ j.name }}">{% call ui::i("play") %}{% endcall %}</button></form>{% endif %}
         {% if nav.can_write() && j.can_retry && j.status != "success" %}<form method="post" action="{{ j.url }}/retry"><button class="btn icon sm" type="submit" title="Retry {{ j.name }}" aria-label="Retry {{ j.name }}">{% call ui::i("retry") %}{% endcall %}</button></form>{% endif %}
       </div>
@@ -46,4 +47,5 @@
 {% endfor %}
 </div>
 {% endif %}
+</div>
 {% endblock %}

@@ -3,7 +3,7 @@
 
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
-use crate::models::{Repo, User};
+use crate::models::{Job, Repo, User};
 
 /// Ordered: each role includes the ones before it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -69,6 +69,15 @@ pub async fn repo(state: &AppState, user: &User, ns: &str, name: &str, need: Rol
     let repo = state.repo_by_path(ns, name).await?.ok_or(AppError::NotFound)?;
     let role = require(state, user, &repo, need).await?;
     Ok((repo, role))
+}
+
+/// The repository at `ns/name` if it is the job's own: a job token reaches no other
+/// (`404`, as for a repository without a role).
+pub async fn job_repo(state: &AppState, job: &Job, ns: &str, name: &str) -> AppResult<Repo> {
+    match state.repo_by_path(ns, name).await? {
+        Some(repo) if repo.id == job.repo_id => Ok(repo),
+        _ => Err(AppError::NotFound),
+    }
 }
 
 /// Ids of the repositories `user` can see; `None` means all of them (administrators).
