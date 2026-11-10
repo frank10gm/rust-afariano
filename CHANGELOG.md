@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.8.0] - 2026-11-10
 
 ### Added
 
@@ -285,7 +285,7 @@ First public release.
   clones of a 216 MB repository at once.
 - Container image, `docker-compose.yml`, and prebuilt runner binaries.
 
-[Unreleased]: https://github.com/frank10gm/rust-afariano/compare/v0.7.0...HEAD
+[0.8.0]: https://github.com/frank10gm/rust-afariano/releases/tag/v0.8.0
 [0.7.0]: https://github.com/frank10gm/rust-afariano/releases/tag/v0.7.0
 [0.6.2]: https://github.com/frank10gm/rust-afariano/releases/tag/v0.6.2
 [0.6.1]: https://github.com/frank10gm/rust-afariano/releases/tag/v0.6.1
